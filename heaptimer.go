@@ -1,9 +1,9 @@
 package timertask
 
 import (
+	"github.com/MoreZero/timertask/heap"
 	"sync"
 	"time"
-	"timertask/heap"
 )
 
 ////taskbase//////////////////////////////////////////////////////
@@ -81,7 +81,7 @@ func NewHeapTimer(budget, max int) TimerHub {
 	if budget == 0 {
 		budget = 256
 	}
-	heapTimer.heap = make([]TimerTask, 0, budget)
+	heapTimer.heap = make([]*slicenode, 0, budget)
 	heapTimer.nodemap = make(map[int64]*slicenode)
 
 	return heapTimer
@@ -101,7 +101,7 @@ func (this *HeapTimer) AddTask(task TimerTask) error {
 		slice: []TimerTask{task},
 		stamp: alarmtime,
 	}
-	position := heap.Push(this.heap, node)
+	position := heap.Push(&this.heap, node)
 	this.nodemap[alarmtime] = node
 	node.position = position
 	task.(Position).SetHeapPosition(position, 0)
@@ -119,27 +119,27 @@ func (this *HeapTimer) Stop() {
 }
 
 func (this *HeapTimer) Running() error {
-	var timeout int
+	var timeout int64
 	var sig int8
-	var now time.Time
+	var now int64
+	var alarmnow time.Time
 	for {
 		now = time.Now().Unix()
-		task := this.heap[0]
-		if task == nil {
+		if this.heap.Len() == 0 {
 			timeout = 99999999999
 		} else {
-			timeout = task.GetAlarmtime() - now
+			timeout = this.heap[0].stamp - now
 		}
 		select {
-		case sig = <-this.quit:
+		case sig = <-this.signal:
 			if sig == S_FLUSH {
 				break
 			}
 			if sig == S_STOP {
-				return
+				return nil
 			}
-		case now = <-time.After(timeout):
-			this.HandleTimeout(now.Unix())
+		case alarmnow = <-time.After(time.Duration(timeout) * time.Second):
+			this.HandleTimeout(alarmnow.Unix())
 		}
 	}
 }
@@ -152,14 +152,37 @@ const ( //定时命令
 )
 */
 func (this *HeapTimer) HandleTimeout(now int64) {
-	var timertask TimerTask
-	this.lock.Lock()
-	timertask = this.heap[0]
-	if timertask == nil || timertask.GetAlarmtime() > now {
+
+	for {
+		this.lock.Lock()
+		node := this.heap[0]
+		if node == nil || node.stamp > now {
+			this.lock.Unlock()
+			return
+		}
+		heap.Pop(&this.heap)
+		delete(this.nodemap, node.stamp)
 		this.lock.Unlock()
-		return
+		length := len(node.slice)
+		for i := 0; i < length; i++ {
+			task := node.slice[i]
+			call := func() {
+				flag := task.HandleWork(now)
+				switch flag {
+				case F_CONTINUE, F_SET_NEW_INTERVAL:
+					this.AddTask(task)
+				case F_DELETE_TIMER:
+				}
+			}
+			if task.GetMode() == M_ASYNC {
+				go call()
+			} else {
+				call()
+			}
+
+		}
+
 	}
-	defer this.lock.Unlock()
 
 	/*
 

@@ -1,9 +1,5 @@
 package timertask
 
-import (
-	"time"
-)
-
 const ( //回调模式
 	M_SYNC  = iota //同步模式
 	M_ASYNC        //异步模式，会新建协程处理任务

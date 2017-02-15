@@ -119,4 +119,5 @@ func down(h Interface, i, n int) int {
 		h.Swap(i, j)
 		i = j
 	}
+	return 0
 }
