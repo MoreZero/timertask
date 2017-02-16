@@ -1,9 +1,11 @@
 package timertask
 
 import (
-	"github.com/MoreZero/timertask/heap"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/MoreZero/timertask/heap"
 )
 
 ////taskbase//////////////////////////////////////////////////////
@@ -64,11 +66,12 @@ const (
 )
 
 type HeapTimer struct {
-	heap    timerHeap
-	nodemap map[int64]*slicenode
-	heapmax int
-	signal  chan int8
-	lock    sync.Mutex
+	heap       timerHeap
+	nodemap    map[int64]*slicenode
+	heapmax    int
+	signal     chan int8
+	signalflag int8
+	lock       sync.Mutex
 }
 
 //budget 预堆大小, 0则默认为256
@@ -105,8 +108,11 @@ func (this *HeapTimer) AddTask(task TimerTask) error {
 	this.nodemap[alarmtime] = node
 	node.position = position
 	task.(Position).SetHeapPosition(position, 0)
+	if this.signalflag == 0 {
+		this.signalflag = 1
+		this.signal <- S_FLUSH
+	}
 	this.lock.Unlock()
-	this.signal <- S_FLUSH
 	return nil
 }
 
@@ -124,12 +130,16 @@ func (this *HeapTimer) Running() error {
 	var now int64
 	var alarmnow time.Time
 	for {
+		fmt.Println("timeout count:", countcode, "node:", this.heap.Len())
 		now = time.Now().Unix()
+		this.lock.Lock()
+		this.signalflag = 0
 		if this.heap.Len() == 0 {
 			timeout = 99999999999
 		} else {
 			timeout = this.heap[0].stamp - now
 		}
+		this.lock.Unlock()
 		select {
 		case sig = <-this.signal:
 			if sig == S_FLUSH {
@@ -151,10 +161,16 @@ const ( //定时命令
 	F_CONTINUE
 )
 */
+var countcode int
+
 func (this *HeapTimer) HandleTimeout(now int64) {
 
 	for {
 		this.lock.Lock()
+		if this.heap.Len() == 0 {
+			this.lock.Unlock()
+			return
+		}
 		node := this.heap[0]
 		if node == nil || node.stamp > now {
 			this.lock.Unlock()
@@ -165,9 +181,10 @@ func (this *HeapTimer) HandleTimeout(now int64) {
 		this.lock.Unlock()
 		length := len(node.slice)
 		for i := 0; i < length; i++ {
+			countcode++
 			task := node.slice[i]
 			call := func() {
-				flag := task.HandleWork(now)
+				flag := task.HandleTimeout(now)
 				switch flag {
 				case F_CONTINUE, F_SET_NEW_INTERVAL:
 					this.AddTask(task)
@@ -184,30 +201,4 @@ func (this *HeapTimer) HandleTimeout(now int64) {
 
 	}
 
-	/*
-
-		for {
-			this.lock.Lock()
-			timertask = this.heap[0]
-			if timertask == nil || timertask.GetAlarmtime() > now {
-				this.lock.Unlock()
-				return
-			}
-			heap.Pop(this.heap).(TimerTask)
-			this.lock.Unlock()
-			call := func() {
-				flag := timertask.HandleWork(now)
-				switch flag {
-				case F_CONTINUE, F_SET_NEW_INTERVAL:
-					this.AddTask(timertask)
-				case F_DELETE_TIMER:
-				}
-			}
-			if timertask.GetMode() == M_ASYNC {
-				go call()
-			} else {
-				call()
-			}
-
-		}*/
 }

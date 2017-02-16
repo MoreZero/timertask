@@ -14,7 +14,7 @@ const ( //定时命令
 type TimerTask interface {
 	GetAlarmtime() (alarmtime int64)
 	GetMode() (handleMode int)
-	HandleWork(time int64) (flag int)
+	HandleTimeout(time int64) (flag int)
 }
 
 type TimerHub interface {
